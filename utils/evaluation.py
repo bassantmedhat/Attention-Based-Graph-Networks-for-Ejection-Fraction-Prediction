@@ -9,12 +9,6 @@ import numpy as np
 import tqdm
 import echonet
 from echonet.models.graph_matching import GModuleSelfAttention
-from echonet.utils.segmentation import (
-    load_model,
-    set_random_seed,
-    load_graph_model,
-    load_regressor_model,
-)
 from echonet.models.model import DeepLabFeatureExtractor
 from echonet.models.regressor import MLP, evaluate_mlp, class_eval
 import warnings
@@ -26,6 +20,49 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+
+def set_random_seed(seed: int):
+    """Set random seed for reproducibility."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def load_model(device, pretrained=True):
+    """Load and set up the DeepLabV3 model with necessary adjustments."""
+    deeplab_model = torchvision.models.segmentation.__dict__["deeplabv3_resnet50"](pretrained=True)
+    deeplab_model.aux_classifier = None
+
+    model = DeepLabFeatureExtractor(deeplab_model)
+
+    model.classifier[-1] = torch.nn.Conv2d(model.classifier[-1].in_channels, 1, kernel_size=model.classifier[-1].kernel_size)  # change number of outputs to 1
+
+    if device.type == "cuda":
+        model = torch.nn.DataParallel(model)
+    model.to(device)
+
+
+    # Freeze model parameters
+    for param in model.parameters():
+        param.requires_grad = False
+
+    return model
+
+
+def load_graph_model(device):
+    """Initialize and load the graph model."""
+    graph_model = GModuleSelfAttention(in_channels=256, num_classes=1, device=device)
+    graph_model = graph_model.to(device)
+    return graph_model
+
+
+def load_regressor_model(device):
+    """Initialize and load the regressor model."""
+    input_size = 128 * 256
+    hidden_sizes = [256, 128, 64, 32]
+    reg_model = MLP(input_size, hidden_sizes)
+    reg_model = reg_model.to(device)
+    return reg_model
 
 def load_checkpoint(model, checkpoint_path):
     """Load model checkpoint, filter mismatched parameters, and update model state."""
@@ -45,13 +82,15 @@ def load_checkpoint(model, checkpoint_path):
 def evaluate(
     data_dir,
     output,
+    graph_ckp_path,
+    reg_ckp_path,
     model_name="deeplabv3_resnet50",
     pretrained=False,
     num_workers=1,
     device=None,
     seed=0,
 ):
-    """Main evaluation function for segmentation."""
+    """Main evaluation function for EF prediction."""
     set_random_seed(seed)
 
     # Set device configuration
@@ -70,23 +109,23 @@ def evaluate(
 
     # Load models
     model = load_model(device, pretrained)
+
+    # Freeze model parameters
+    for param in model.parameters():
+        param.requires_grad = False
     graph_model = load_graph_model(device)
     reg_model = load_regressor_model(device)
 
     # Load checkpoints
     load_checkpoint(
         graph_model,
-        "/home/bassant/dynamic/output/segmentation/deeplabv3_resnet50_random/final_graph_top_best.pt",
+        graph_ckp_path,
     )
     load_checkpoint(
         reg_model,
-        "/home/bassant/dynamic/output/segmentation/deeplabv3_resnet50_random/linear_reg_checkpoint.pt",
+        reg_ckp_path,
     )
 
-    # Freeze graph and regressor models
-    for model in [graph_model, reg_model]:
-        for param in model.parameters():
-            param.requires_grad = False
     graph_model.eval()
     model.eval()
     reg_model.eval()
@@ -95,32 +134,22 @@ def evaluate(
     mean, std = echonet.utils.get_mean_and_std(
         echonet.datasets.Echo(root=data_dir, split="test")
     )
-    kwargs = {
-        "target_type": ["LargeFrame", "SmallFrame", "LargeTrace", "SmallTrace", "EF"],
-        "mean": mean,
-        "std": std,
-    }
+    tasks = ["LargeFrame", "SmallFrame", "LargeTrace", "SmallTrace","EF"]
+    kwargs = {"target_type": tasks,
+            "mean": mean,
+            "std": std
+            }
 
     # Load dataset and dataloader
-    dataset = {"test": echonet.datasets.Echo(root=data_dir, split="test", **kwargs)}
+    dataset = {}
+    dataset["test"] = echonet.datasets.Echo(root=data_dir, split="test", **kwargs)
+
     dataloader = torch.utils.data.DataLoader(
-        dataset["test"],
-        batch_size=1,
-        num_workers=num_workers,
-        shuffle=False,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
-    )
+                        dataset["test"], batch_size=1, num_workers=num_workers, shuffle=False, pin_memory=(device.type == "cuda"), drop_last=False)
 
     # Initialize metrics
     total_loss = 0.0
     large_inter, large_union, small_inter, small_union = 0, 0, 0, 0
-    large_inter_list, large_union_list, small_inter_list, small_union_list = (
-        [],
-        [],
-        [],
-        [],
-    )
     losses = {}
     EF_list, prediction_list = [], []
 
@@ -206,7 +235,7 @@ def evaluate(
 
 if __name__ == "__main__":
     total_loss, mat_loss, classification_loss, reg_epoch_mae, mse, r2, f_score = (
-        evaluate(data_dir="path/to/data", output="path/to/output")
+        evaluate(data_dir=None, output=None,graph_ckp_path="/graphckp_path",reg_ckp_path= "/reg_checkpoint")
     )
     print(f"Total Loss: {total_loss}")
     print(f"Matrix Loss: {mat_loss}")
@@ -215,3 +244,4 @@ if __name__ == "__main__":
     print(f"Regression Epoch MSE: {mse:.4f}")
     print(f"Regression Epoch R2_: {r2:.4f}")
     print(f"Regression Epoch F_S: {f_score:.4f}")
+

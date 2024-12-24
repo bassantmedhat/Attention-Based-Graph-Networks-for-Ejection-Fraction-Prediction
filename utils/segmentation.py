@@ -21,7 +21,7 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Restrict CUDA to specific GPUs
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,4,5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,5,6"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from echonet.models.graph_matching import GModuleSelfAttention
@@ -754,9 +754,7 @@ def set_random_seed(seed: int):
 
 def load_model(device, pretrained=True):
     """Load and set up the DeepLabV3 model with necessary adjustments."""
-    deeplab_model = torchvision.models.segmentation.deeplabv3_resnet50(
-        pretrained=pretrained
-    )
+    deeplab_model = torchvision.models.segmentation.__dict__["deeplabv3_resnet50"](pretrained=pretrained)
     deeplab_model.aux_classifier = None
     model = DeepLabFeatureExtractor(deeplab_model)
     model.classifier[-1] = nn.Conv2d(
@@ -818,3 +816,4 @@ def _video_collate_fn(x):
     target = zip(*target)
 
     return video, target, i
+
