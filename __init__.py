@@ -9,7 +9,8 @@ import click
 from echonet.__version__ import __version__
 from echonet.config import CONFIG as config
 import echonet.datasets as datasets
-import echonet.utils as utils
+import echonet.utils 
+import utils
 
 
 @click.group()
@@ -20,7 +21,7 @@ def main():
 del click
 
 
-main.add_command(utils.segmentation.run)
-main.add_command(utils.video.run)
+main.add_command(echonet.utils.segmentation.run)
+main.add_command(echonet.utils.video.run)
 
-__all__ = ["__version__", "config", "datasets", "main", "utils"]
+__all__ = ["__version__", "config", "datasets", "main", "echonet.utils","utils"  ]
